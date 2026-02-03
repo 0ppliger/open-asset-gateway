@@ -20,6 +20,12 @@ var propertyTypes = map[oam.PropertyType]reflect.Type{
 	oam.VulnProperty      : reflect.TypeOf(oam_pf.VulnProperty{}),
 }
 
+type EntityTag struct {
+	Type  oam.PropertyType `json:"type"`
+	Property oam.Property  `json:"property"`
+	Entity string          `json:"entity"`
+}
+
 func (a *EntityTag) UnmarshalJSON(data []byte) error {
 	type Alias EntityTag
 	aux := &struct {
@@ -31,22 +37,6 @@ func (a *EntityTag) UnmarshalJSON(data []byte) error {
 
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
-	}
-
-	if aux.ID == "" && aux.Property == nil {
-		return errors.New(fmt.Sprintf("no data"))
-	}
-
-	if aux.Property == nil {
-		return nil
-	}
-
-	if aux.Type == "" {
-		return errors.New(fmt.Sprintf("no type provided"))
-	}
-
-	if aux.Entity == "" {
-		return errors.New(fmt.Sprintf("target is required"))
 	}
 
 	T, ok := propertyTypes[aux.Type]
@@ -64,7 +54,7 @@ func (a *EntityTag) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (api *ApiV1) emitEntityTag(w http.ResponseWriter, r *http.Request) {
+func (api *ApiV1) createEntityTag(w http.ResponseWriter, r *http.Request) {
 	if r.Body == nil {
 		http.Error(w, "no body", http.StatusBadRequest)
 		return
@@ -79,19 +69,7 @@ func (api *ApiV1) emitEntityTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if input.Property == nil {
-		if err := api.store.DeleteEntityTag(api.ctx, input.ID); err != nil {
-			http.Error(w, "Failed to delete entity tag: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		
-		res := Response{ Subject: input.ID, Action: "deleted" }
-		json, _ := json.Marshal(res)
-		w.Write([]byte(json))
-		return
-	}
-
-	target_entity, err := api.store.FindEntityById(api.ctx, input.Entity)
+	entity, err := api.store.FindEntityById(api.ctx, input.Entity)
 	if err != nil {
 		http.Error(w, "Cannot find to entity: "+err.Error(), http.StatusBadRequest)
 		return		
@@ -99,16 +77,76 @@ func (api *ApiV1) emitEntityTag(w http.ResponseWriter, r *http.Request) {
 
 	in_entity_tag := &dbt.EntityTag{
 		Property: input.Property,
-		Entity: target_entity,
+		Entity: entity,
 	}
 
-	out_entity_tag, err := api.store.CreateEntityTag(api.ctx, target_entity, in_entity_tag)
+	out_entity_tag, err := api.store.CreateEntityTag(api.ctx, entity, in_entity_tag)
 	if err != nil {
 		http.Error(w, "Failed to upsert asset: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	res := Response{ Subject: out_entity_tag.ID, Action: "upserted" }
+	json, _ := json.Marshal(res)
+	w.Write([]byte(json))	
+}
+
+func (api *ApiV1) deleteEntityTag(w http.ResponseWriter, r *http.Request) {	
+	id := r.PathValue("id")
+	
+	if err := api.store.DeleteEntityTag(api.ctx, id); err != nil {
+		http.Error(w, "Failed to delete entity tag: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	
+	res := Response{ Subject: id, Action: "deleted" }
+	json, _ := json.Marshal(res)
+	w.Write([]byte(json))
+}
+
+func (api *ApiV1) updateEntityTag(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	
+	if r.Body == nil {
+		http.Error(w, "no body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	var input EntityTag
+	
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&input); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	_, err := api.store.FindEntityTagById(api.ctx, id)
+	if err != nil {
+		http.Error(w, "Cannot find to entity tag: "+err.Error(), http.StatusBadRequest)
+		return		
+	}
+
+	
+	entity, err := api.store.FindEntityById(api.ctx, input.Entity)
+	if err != nil {
+		http.Error(w, "Cannot find to entity: "+err.Error(), http.StatusBadRequest)
+		return		
+	}
+
+	in_entity_tag := &dbt.EntityTag{
+		ID: id,
+		Property: input.Property,
+		Entity: entity,
+	}
+
+	out_entity_tag, err := api.store.CreateEntityTag(api.ctx, entity, in_entity_tag)
+	if err != nil {
+		http.Error(w, "Failed to upsert asset: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	res := Response{ Subject: out_entity_tag.ID, Action: "updated" }
 	json, _ := json.Marshal(res)
 	w.Write([]byte(json))	
 }

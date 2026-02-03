@@ -47,6 +47,11 @@ var assetTypes = map[oam.AssetType]reflect.Type{
 	oam.URL              : reflect.TypeOf(oam_url.URL{}),
 }
 
+type Entity struct {
+	Type  oam.AssetType `json:"type"`
+	Asset oam.Asset     `json:"asset"`
+}
+
 func (a *Entity) UnmarshalJSON(data []byte) error {
 	type Alias Entity
 	aux := &struct {
@@ -58,18 +63,6 @@ func (a *Entity) UnmarshalJSON(data []byte) error {
 
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
-	}
-
-	if aux.ID == "" && aux.Asset == nil {
-		return errors.New(fmt.Sprintf("no data"))
-	}
-
-	if aux.Asset == nil {
-		return nil
-	}
-
-	if aux.Type == "" {
-		return errors.New(fmt.Sprintf("no type provided"))
 	}
 
 	T, ok := assetTypes[aux.Type]
@@ -87,7 +80,7 @@ func (a *Entity) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-func (api *ApiV1) emitEntity(w http.ResponseWriter, r *http.Request) {
+func (api *ApiV1) createEntity(w http.ResponseWriter, r *http.Request) {
 	if r.Body == nil {
 		http.Error(w, "no body", http.StatusBadRequest)
 		return
@@ -102,20 +95,7 @@ func (api *ApiV1) emitEntity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if input.Asset == nil {
-		if err := api.store.DeleteEntity(api.ctx, input.ID); err != nil {
-			http.Error(w, "Failed to delete asset: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-
-		res := Response{ Subject: input.ID, Action: "deleted" }
-		json, _ := json.Marshal(res)
-		w.Write([]byte(json))
-		return
-	}
-
 	in_entity := &dbt.Entity{
-		ID: input.ID,
 		Asset: input.Asset,
 	}
 	
@@ -128,4 +108,56 @@ func (api *ApiV1) emitEntity(w http.ResponseWriter, r *http.Request) {
 	res := Response{ Subject: out_entity.ID, Action: "upserted" }
 	json, _ := json.Marshal(res)
 	w.Write([]byte(json))	
+}
+
+func (api *ApiV1) deleteEntity(w http.ResponseWriter, r *http.Request) {	
+	id := r.PathValue("id")
+	
+	if err := api.store.DeleteEntity(api.ctx, id); err != nil {
+		http.Error(w, "Failed to delete entity: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	
+	res := Response{ Subject: id, Action: "deleted" }
+	json, _ := json.Marshal(res)
+	w.Write([]byte(json))
+}
+
+func (api *ApiV1) updateEntity(w http.ResponseWriter, r *http.Request) {	
+	id := r.PathValue("id")
+
+	if r.Body == nil {
+		http.Error(w, "no body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	var input Entity
+	
+	decoder := json.NewDecoder(r.Body)
+	if err := decoder.Decode(&input); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	_, err := api.store.FindEntityById(api.ctx, id)
+	if err != nil {
+		http.Error(w, "Cannot find to entity: "+err.Error(), http.StatusBadRequest)
+		return		
+	}
+
+	in_entity := &dbt.Entity{
+		ID: id,
+		Asset: input.Asset,
+	}
+	
+	out_entity, err := api.store.CreateEntity(api.ctx, in_entity)
+	if err != nil {
+		http.Error(w, "Failed to upsert asset: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	
+	res := Response{ Subject: out_entity.ID, Action: "updated" }
+	json, _ := json.Marshal(res)
+	w.Write([]byte(json))
 }
