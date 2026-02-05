@@ -40,11 +40,11 @@ var eventName = map[EventType]string{
 
 type ServerSentEvent struct {
 	Event EventType
-	Data []byte
+	Data Serializable
 }
 
 func (sse ServerSentEvent) Write(w http.ResponseWriter) {
-	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventName[sse.Event], sse.Data)
+	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventName[sse.Event], sse.Data.JSON())
 }
 
 type EventBus struct {
@@ -69,7 +69,7 @@ func (bus *EventBus) RemoveSubscriber(ch chan ServerSentEvent) {
 	close(ch)
 }
 
-func (bus *EventBus) Publish(id string, event EventType, data []byte) {
+func (bus *EventBus) Publish(event EventType, data Serializable) {
 
 	sse := ServerSentEvent{
 		Event: event,

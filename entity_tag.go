@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"time"
 	dbt "github.com/owasp-amass/asset-db/types"
 	oam "github.com/owasp-amass/open-asset-model"
 	oam_dns "github.com/owasp-amass/open-asset-model/dns"
@@ -21,9 +22,38 @@ var propertyTypes = map[oam.PropertyType]reflect.Type{
 }
 
 type EntityTag struct {
-	Type  oam.PropertyType `json:"type"`
-	Property oam.Property  `json:"property"`
-	Entity string          `json:"entity"`
+	ID        string           `json:"id",omitempty`
+	CreatedAt time.Time        `json:"created_at",omitempty`
+	LastSeen  time.Time        `json:"last_seen",omitempty`
+	Type      oam.PropertyType `json:"type"`
+	Property  oam.Property     `json:"property"`
+	Entity    string           `json:"entity"`
+}
+
+func (e EntityTag) JSON() []byte {
+	json_encoded, _ := json.Marshal(e)
+	return json_encoded
+}
+
+func (e EntityTag) ToStore() *dbt.EntityTag {
+	return &dbt.EntityTag{
+		ID:         e.ID,
+		CreatedAt:  e.CreatedAt,
+		LastSeen:   e.LastSeen,
+		Property:   e.Property,
+		Entity:     &dbt.Entity{ID: e.Entity},
+	}
+}
+
+func EntityTagFromStore(e *dbt.EntityTag) EntityTag {
+	return EntityTag{
+		ID:         e.ID,
+		CreatedAt:  e.CreatedAt,
+		LastSeen:   e.LastSeen,
+		Property:   e.Property,
+		Type:       e.Property.PropertyType(),
+		Entity:     e.Entity.ID,
+	}
 }
 
 func (a *EntityTag) UnmarshalJSON(data []byte) error {
@@ -69,39 +99,40 @@ func (api *ApiV1) CreateEntityTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entity, err := api.store.FindEntityById(api.ctx, input.Entity)
+	_, err := api.store.FindEntityById(api.ctx, input.Entity)
 	if err != nil {
-		http.Error(w, "Cannot find to entity: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "Cannot find entity tag: "+err.Error(), http.StatusBadRequest)
 		return		
 	}
 
-	in_entity_tag := &dbt.EntityTag{
-		Property: input.Property,
-		Entity: entity,
-	}
+	entity_tag := input.ToStore()
 
-	out_entity_tag, err := api.store.CreateEntityTag(api.ctx, entity, in_entity_tag)
+	out, err := api.store.CreateEntityTag(api.ctx, entity_tag.Entity, entity_tag)
 	if err != nil {
-		http.Error(w, "Failed to upsert asset: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "Failed to upsert entity: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	created_entity_tag := EntityTagFromStore(out)
 
-	res := Response{ Subject: out_entity_tag.ID, Action: "upserted" }
-	json, _ := json.Marshal(res)
-	w.Write([]byte(json))	
+	w.Write(created_entity_tag.JSON())	
 }
 
 func (api *ApiV1) DeleteEntityTag(w http.ResponseWriter, r *http.Request) {	
 	id := r.PathValue("id")
+
+	out, err := api.store.FindEntityTagById(api.ctx, id)
+	if err != nil {
+		http.Error(w, "Cannot find entity tag: "+err.Error(), http.StatusBadRequest)
+		return		
+	}
+	delete_entity_tag := EntityTagFromStore(out)
 	
 	if err := api.store.DeleteEntityTag(api.ctx, id); err != nil {
 		http.Error(w, "Failed to delete entity tag: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	
-	res := Response{ Subject: id, Action: "deleted" }
-	json, _ := json.Marshal(res)
-	w.Write([]byte(json))
+	w.Write(delete_entity_tag.JSON())
 }
 
 func (api *ApiV1) UpdateEntityTag(w http.ResponseWriter, r *http.Request) {
@@ -123,30 +154,26 @@ func (api *ApiV1) UpdateEntityTag(w http.ResponseWriter, r *http.Request) {
 
 	_, err := api.store.FindEntityTagById(api.ctx, id)
 	if err != nil {
-		http.Error(w, "Cannot find to entity tag: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "Cannot find entity tag: "+err.Error(), http.StatusBadRequest)
 		return		
 	}
 
 	
-	entity, err := api.store.FindEntityById(api.ctx, input.Entity)
+	_, err = api.store.FindEntityById(api.ctx, input.Entity)
 	if err != nil {
-		http.Error(w, "Cannot find to entity: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "Cannot find entity: "+err.Error(), http.StatusBadRequest)
 		return		
 	}
 
-	in_entity_tag := &dbt.EntityTag{
-		ID: id,
-		Property: input.Property,
-		Entity: entity,
-	}
+	input.ID = id
+	entity_tag := input.ToStore()
 
-	out_entity_tag, err := api.store.CreateEntityTag(api.ctx, entity, in_entity_tag)
+	out, err := api.store.CreateEntityTag(api.ctx, entity_tag.Entity, entity_tag)
 	if err != nil {
-		http.Error(w, "Failed to upsert asset: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "Failed to update entity: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	res := Response{ Subject: out_entity_tag.ID, Action: "updated" }
-	json, _ := json.Marshal(res)
-	w.Write([]byte(json))	
+	updated_entity_tag := EntityTagFromStore(out)
+	
+	w.Write(updated_entity_tag.JSON())	
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+
 	"github.com/owasp-amass/asset-db/repository"
 )
 
@@ -11,8 +12,6 @@ type ApiV1 struct {
 	bus *EventBus
 }
 
-type Response struct {
-	Subject string `json:"subject"`
-	Action string `json:"action"`
+type Serializable interface {
+	JSON() []byte
 }
-

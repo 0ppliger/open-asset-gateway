@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"time"
 	dbt "github.com/owasp-amass/asset-db/types"
 	oam "github.com/owasp-amass/open-asset-model"
 	oam_dns "github.com/owasp-amass/open-asset-model/dns"
@@ -48,14 +49,41 @@ var assetTypes = map[oam.AssetType]reflect.Type{
 }
 
 type Entity struct {
-	Type  oam.AssetType `json:"type"`
-	Asset oam.Asset     `json:"asset"`
+	ID        string        `json:"id",omitempty`
+	CreatedAt time.Time     `json:"created_at",omitempty`
+	LastSeen  time.Time     `json:"last_seen",omitempty`
+	Asset     oam.Asset     `json:"asset"`
+	Type      oam.AssetType `json:"type"`
+}
+
+func (e Entity) JSON() []byte {
+	json_encoded, _ := json.Marshal(e)
+	return json_encoded
+}
+
+func (e Entity) ToStore() *dbt.Entity {
+	return &dbt.Entity{
+		ID:        e.ID,
+		CreatedAt: e.CreatedAt,
+		LastSeen:  e.LastSeen,
+		Asset:     e.Asset,
+	}
+}
+
+func EntityFromStore(e *dbt.Entity) Entity {
+	return Entity{
+		ID:        e.ID,
+		CreatedAt: e.CreatedAt,
+		LastSeen:  e.LastSeen,
+		Asset:     e.Asset,
+		Type:      e.Asset.AssetType(),
+	}
 }
 
 func (a *Entity) UnmarshalJSON(data []byte) error {
 	type Alias Entity
 	aux := &struct {
-		Asset json.RawMessage `json:"asset",omitempty`
+		Asset json.RawMessage `json:"asset"`
 		*Alias
 	}{
 		Alias: (*Alias)(a),
@@ -94,45 +122,37 @@ func (api *ApiV1) CreateEntity(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	in_entity := &dbt.Entity{
-		Asset: input.Asset,
-	}
 	
-	out_entity, err := api.store.CreateEntity(api.ctx, in_entity)
+	out, err := api.store.CreateEntity(api.ctx, input.ToStore())
 	if err != nil {
 		http.Error(w, "Failed to upsert asset: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	created_entity := EntityFromStore(out)
+	
+	api.bus.Publish(EntityCreated, created_entity)
 
-	json_asset, _ := out_entity.Asset.JSON()
-	api.bus.Publish(out_entity.ID, EntityCreated, json_asset)
-
-	res := Response{ Subject: out_entity.ID, Action: "upserted" }
-	json, _ := json.Marshal(res)
-	w.Write([]byte(json))	
+	w.Write(created_entity.JSON())	
 }
 
 func (api *ApiV1) DeleteEntity(w http.ResponseWriter, r *http.Request) {	
 	id := r.PathValue("id")
 
-	entity, err := api.store.FindEntityById(api.ctx, id)
+	out, err := api.store.FindEntityById(api.ctx, id)
 	if err != nil {
-		http.Error(w, "Cannot find to entity: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "Cannot find entity: "+err.Error(), http.StatusBadRequest)
 		return		
 	}
+	deleted_entity := EntityFromStore(out)
 	
 	if err := api.store.DeleteEntity(api.ctx, id); err != nil {
 		http.Error(w, "Failed to delete entity: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	json_asset, _ := entity.Asset.JSON()
-	api.bus.Publish(entity.ID, EntityDeleted, json_asset)
+	api.bus.Publish(EntityDeleted, deleted_entity)
 	
-	res := Response{ Subject: id, Action: "deleted" }
-	json, _ := json.Marshal(res)
-	w.Write([]byte(json))
+	w.Write(deleted_entity.JSON())
 }
 
 func (api *ApiV1) UpdateEntity(w http.ResponseWriter, r *http.Request) {	
@@ -158,21 +178,16 @@ func (api *ApiV1) UpdateEntity(w http.ResponseWriter, r *http.Request) {
 		return		
 	}
 
-	in_entity := &dbt.Entity{
-		ID: id,
-		Asset: input.Asset,
-	}
+	input.ID = id
 	
-	out_entity, err := api.store.CreateEntity(api.ctx, in_entity)
+	out, err := api.store.CreateEntity(api.ctx, input.ToStore())
 	if err != nil {
 		http.Error(w, "Failed to upsert asset: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	updated_entity := EntityFromStore(out)
 
-	json_asset, _ := out_entity.Asset.JSON()
-	api.bus.Publish(out_entity.ID, EntityUpdated, json_asset)
+	api.bus.Publish(EntityUpdated, updated_entity)
 	
-	res := Response{ Subject: out_entity.ID, Action: "updated" }
-	json, _ := json.Marshal(res)
-	w.Write([]byte(json))
+	w.Write(updated_entity.JSON())
 }

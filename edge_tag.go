@@ -6,14 +6,44 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"time"
 	dbt "github.com/owasp-amass/asset-db/types"
 	oam "github.com/owasp-amass/open-asset-model"
 )
 
 type EdgeTag struct {
-	Type  oam.PropertyType `json:"type"`
-	Property oam.Property  `json:"property"`
-	Edge string            `json:"edge"`
+	ID        string           `json:"id",omitempty`
+	CreatedAt time.Time        `json:"created_at",omitempty`
+	LastSeen  time.Time        `json:"last_seen",omitempty`
+	Property  oam.Property     `json:"property"`
+	Edge      string           `json:"edge"`
+	Type      oam.PropertyType `json:"type"`
+}
+
+func (e EdgeTag) JSON() []byte {
+	json_encoded, _ := json.Marshal(e)
+	return json_encoded
+}
+
+func (e EdgeTag) ToStore() *dbt.EdgeTag {
+	return &dbt.EdgeTag{
+		ID:         e.ID,
+		CreatedAt:  e.CreatedAt,
+		LastSeen:   e.LastSeen,
+		Property:   e.Property,
+		Edge:       &dbt.Edge{ID: e.Edge},
+	}
+}
+
+func EdgeTagFromStore(e *dbt.EdgeTag) EdgeTag {
+	return EdgeTag{
+		ID:         e.ID,
+		CreatedAt:  e.CreatedAt,
+		LastSeen:   e.LastSeen,
+		Property:   e.Property,
+		Type:       e.Property.PropertyType(),
+		Edge:       e.Edge.ID,
+	}
 }
 
 func (a *EdgeTag) UnmarshalJSON(data []byte) error {
@@ -59,39 +89,41 @@ func (api *ApiV1) CreateEdgeTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	edge, err := api.store.FindEdgeById(api.ctx, input.Edge)
+	_, err := api.store.FindEdgeById(api.ctx, input.Edge)
 	if err != nil {
 		http.Error(w, "Cannot find to edge: "+err.Error(), http.StatusBadRequest)
 		return		
 	}
 
-	in_edge_tag := &dbt.EdgeTag{
-		Property: input.Property,
-		Edge: edge,
-	}
-
-	out_edge_tag, err := api.store.CreateEdgeTag(api.ctx, edge, in_edge_tag)
+	edge_tag := input.ToStore()
+	
+	out, err := api.store.CreateEdgeTag(api.ctx, edge_tag.Edge, edge_tag)
 	if err != nil {
 		http.Error(w, "Failed to upsert asset: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	created_edge_tag := EdgeTagFromStore(out)
 
-	res := Response{ Subject: out_edge_tag.ID, Action: "upserted" }
-	json, _ := json.Marshal(res)
-	w.Write([]byte(json))	
+	w.Write(created_edge_tag.JSON())	
 }
 
 func (api *ApiV1) DeleteEdgeTag(w http.ResponseWriter, r *http.Request) {	
 	id := r.PathValue("id")
+
+	out, err := api.store.FindEdgeTagById(api.ctx, id)
+	if err != nil {
+		http.Error(w, "Cannot find edge tag: "+err.Error(), http.StatusBadRequest)
+		return		
+	}
+	deleted_edge_tag := EdgeTagFromStore(out)
+
 	
 	if err := api.store.DeleteEdgeTag(api.ctx, id); err != nil {
 		http.Error(w, "Failed to delete edge tag: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	
-	res := Response{ Subject: id, Action: "deleted" }
-	json, _ := json.Marshal(res)
-	w.Write([]byte(json))
+	w.Write(deleted_edge_tag.JSON())
 }
 
 func (api *ApiV1) UpdateEdgeTag(w http.ResponseWriter, r *http.Request) {
@@ -118,25 +150,21 @@ func (api *ApiV1) UpdateEdgeTag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	
-	edge, err := api.store.FindEdgeById(api.ctx, input.Edge)
+	_, err = api.store.FindEdgeById(api.ctx, input.Edge)
 	if err != nil {
 		http.Error(w, "Cannot find to edge: "+err.Error(), http.StatusBadRequest)
 		return		
 	}
 
-	in_edge_tag := &dbt.EdgeTag{
-		ID: id,
-		Property: input.Property,
-		Edge: edge,
-	}
-
-	out_edge_tag, err := api.store.CreateEdgeTag(api.ctx, edge, in_edge_tag)
+	input.ID = id
+	edge_tag := input.ToStore()
+	
+	out, err := api.store.CreateEdgeTag(api.ctx, edge_tag.Edge, edge_tag)
 	if err != nil {
 		http.Error(w, "Failed to upsert asset: "+err.Error(), http.StatusBadRequest)
 		return
-	}
+	}	
+	updated_edge_tag := EdgeTagFromStore(out)
 
-	res := Response{ Subject: out_edge_tag.ID, Action: "updated" }
-	json, _ := json.Marshal(res)
-	w.Write([]byte(json))	
+	w.Write(updated_edge_tag.JSON())	
 }

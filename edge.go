@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"reflect"
+	"time"
 	dbt "github.com/owasp-amass/asset-db/types"
 	oam "github.com/owasp-amass/open-asset-model"
 	oam_dns "github.com/owasp-amass/open-asset-model/dns"
@@ -21,10 +22,41 @@ var relationTypes = map[oam.RelationType]reflect.Type{
 }
 
 type Edge struct {
-	Type  oam.RelationType `json:"type"`
-	Relation oam.Relation  `json:"relation"`
-	From string            `json:"from"`
-	To string              `json:"to"`
+	ID         string           `json:"id",omitempty`
+	CreatedAt  time.Time        `json:"created_at",omitempty`
+	LastSeen   time.Time        `json:"last_seen",omitempty`
+	Type       oam.RelationType `json:"type"`
+	Relation   oam.Relation     `json:"relation"`
+	FromEntity string           `json:"from_entity"`
+	ToEntity   string           `json:"to_entity"`
+}
+
+func (e Edge) JSON() []byte {
+	json_encoded, _ := json.Marshal(e)
+	return json_encoded
+}
+
+func (e Edge) ToStore(from_entity *dbt.Entity, to_entity *dbt.Entity) *dbt.Edge {
+	return &dbt.Edge{
+		ID:         e.ID,
+		CreatedAt:  e.CreatedAt,
+		LastSeen:   e.LastSeen,
+		Relation:   e.Relation,
+		FromEntity: from_entity,
+		ToEntity:   to_entity,
+	}
+}
+
+func EdgeFromStore(e *dbt.Edge) Edge {
+	return Edge{
+		ID:         e.ID,
+		CreatedAt:  e.CreatedAt,
+		LastSeen:   e.LastSeen,
+		Relation:   e.Relation,
+		Type:       e.Relation.RelationType(),
+		FromEntity: e.FromEntity.ID,
+		ToEntity:   e.ToEntity.ID,
+	}
 }
 
 func (a *Edge) UnmarshalJSON(data []byte) error {
@@ -70,47 +102,45 @@ func (api *ApiV1) CreateEdge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	from_entity, err := api.store.FindEntityById(api.ctx, input.From)
+	from_entity, err := api.store.FindEntityById(api.ctx, input.FromEntity)
 	if err != nil {
 		http.Error(w, "Cannot find from entity: "+err.Error(), http.StatusBadRequest)
 		return		
 	}
 
-	to_entity, err := api.store.FindEntityById(api.ctx, input.To)
+	to_entity, err := api.store.FindEntityById(api.ctx, input.ToEntity)
 	if err != nil {
 		http.Error(w, "Cannot find to entity: "+err.Error(), http.StatusBadRequest)
 		return		
 	}
-	
-	in_edge := &dbt.Edge{
-		Relation: input.Relation,
-		FromEntity: from_entity,
-		ToEntity: to_entity,
-	}
-	
-	out_edge, err := api.store.CreateEdge(api.ctx, in_edge)
+		
+	out, err := api.store.CreateEdge(api.ctx, input.ToStore(from_entity, to_entity))
 	if err != nil {
 		http.Error(w, "Failed to upsert asset: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	created_edge := EdgeFromStore(out)
 
-	res := Response{ Subject: out_edge.ID, Action: "upserted" }
-	json, _ := json.Marshal(res)
-	w.Write([]byte(json))	
+	w.Write(created_edge.JSON())	
 }
 
 
 func (api *ApiV1) DeleteEdge(w http.ResponseWriter, r *http.Request) {	
 	id := r.PathValue("id")
-	
+
+ 	out, err := api.store.FindEdgeById(api.ctx, id)
+	if err != nil {
+		http.Error(w, "Cannot find edge: "+err.Error(), http.StatusBadRequest)
+		return		
+	}
+	deleted_edge := EdgeFromStore(out)
+
 	if err := api.store.DeleteEdge(api.ctx, id); err != nil {
 		http.Error(w, "Failed to delete edge: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	
-	res := Response{ Subject: id, Action: "deleted" }
-	json, _ := json.Marshal(res)
-	w.Write([]byte(json))
+	w.Write(deleted_edge.JSON())
 }
 
 func (api *ApiV1) UpdateEdge(w http.ResponseWriter, r *http.Request) {
@@ -136,32 +166,26 @@ func (api *ApiV1) UpdateEdge(w http.ResponseWriter, r *http.Request) {
 		return		
 	}
 
-	from_entity, err := api.store.FindEntityById(api.ctx, input.From)
+	from_entity, err := api.store.FindEntityById(api.ctx, input.FromEntity)
 	if err != nil {
 		http.Error(w, "Cannot find from entity: "+err.Error(), http.StatusBadRequest)
 		return		
 	}
 
-	to_entity, err := api.store.FindEntityById(api.ctx, input.To)
+	to_entity, err := api.store.FindEntityById(api.ctx, input.ToEntity)
 	if err != nil {
 		http.Error(w, "Cannot find to entity: "+err.Error(), http.StatusBadRequest)
 		return		
 	}
+
+	input.ID = id
 	
-	in_edge := &dbt.Edge{
-		ID: id,
-		Relation: input.Relation,
-		FromEntity: from_entity,
-		ToEntity: to_entity,
-	}
-	
-	out_edge, err := api.store.CreateEdge(api.ctx, in_edge)
+	out, err := api.store.CreateEdge(api.ctx, input.ToStore(from_entity, to_entity))
 	if err != nil {
 		http.Error(w, "Failed to upsert asset: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	updated_edge := EdgeFromStore(out)
 
-	res := Response{ Subject: out_edge.ID, Action: "updated" }
-	json, _ := json.Marshal(res)
-	w.Write([]byte(json))	
+	w.Write(updated_edge.JSON())	
 }
