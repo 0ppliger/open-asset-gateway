@@ -12,30 +12,38 @@ const (
 	EntityCreated EventType = iota
 	EntityDeleted
 	EntityUpdated
+	EntityTouched
 	EdgeCreated
 	EdgeDeleted
 	EdgeUpdated
+	EdgeTouched
 	EdgeTagCreated
 	EdgeTagDeleted
 	EdgeTagUpdated
+	EdgeTagTouched
 	EntityTagCreated
 	EntityTagDeleted
 	EntityTagUpdated
+	EntityTagTouched
 )
 
 var eventName = map[EventType]string{
 	EntityCreated: "EntityCreated",
 	EntityDeleted: "EntityDeleted",
 	EntityUpdated: "EntityUpdated",
+	EntityTouched: "EntityTouched",
 	EdgeCreated: "EdgeCreated",
 	EdgeDeleted: "EdgeDeleted",
 	EdgeUpdated: "EdgeUpdated",
+	EdgeTouched: "EdgeTouched",
 	EdgeTagCreated: "EdgeTagCreated",
 	EdgeTagDeleted: "EdgeTagDeleted",
 	EdgeTagUpdated: "EdgeTagUpdated",
+	EdgeTagTouched: "EdgeTagTouched",
 	EntityTagCreated: "EntityTagCreated",
 	EntityTagDeleted: "EntityTagDeleted",
 	EntityTagUpdated: "EntityTagUpdated",
+	EntityTagTouched: "EntityTagTouched",
 }
 
 type ServerSentEvent struct {
